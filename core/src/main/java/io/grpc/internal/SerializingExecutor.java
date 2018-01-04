@@ -19,13 +19,11 @@ package io.grpc.internal;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.Preconditions;
-import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.annotation.Nullable;
 
 /**
  * Executor ensuring that all {@link Runnable} tasks submitted are executed in order
@@ -33,7 +31,8 @@ import javax.annotation.Nullable;
  * running at the same time.
  */
 // TODO(madongfly): figure out a way to not expose it or move it to transport package.
-public final class SerializingExecutor implements Executor, Runnable {
+@SuppressWarnings("serial")
+public final class SerializingExecutor extends ConcurrentLinkedQueue<Runnable> implements Executor, Runnable {
   private static final Logger log =
       Logger.getLogger(SerializingExecutor.class.getName());
 
@@ -61,9 +60,6 @@ public final class SerializingExecutor implements Executor, Runnable {
   /** Underlying executor that all submitted Runnable objects are run on. */
   private final Executor executor;
 
-  /** A list of Runnables to be run in order. */
-  private final Queue<Runnable> runQueue = new ConcurrentLinkedQueue<Runnable>();
-
   private volatile int runState = STOPPED;
 
   /**
@@ -82,11 +78,7 @@ public final class SerializingExecutor implements Executor, Runnable {
    */
   @Override
   public void execute(Runnable r) {
-    runQueue.add(checkNotNull(r, "'r' must not be null."));
-    schedule(r);
-  }
-
-  private void schedule(@Nullable Runnable removable) {
+    add(checkNotNull(r, "'r' must not be null."));
     if (atomicHelper.runStateCompareAndSet(this, STOPPED, RUNNING)) {
       boolean success = false;
       try {
@@ -98,16 +90,14 @@ public final class SerializingExecutor implements Executor, Runnable {
         // be recoverable.  So we update our state and propagate so that if
         // our caller deems it recoverable we won't be stuck.
         if (!success) {
-          if (removable != null) {
-            // This case can only be reached if 'this' was not currently running, and we failed to
-            // reschedule.  The item should still be in the queue for removal.
-            // ConcurrentLinkedQueue claims that null elements are not allowed, but seems to not
-            // throw if the item to remove is null.  If removable is present in the queue twice,
-            // the wrong one may be removed.  It doesn't seem possible for this case to exist today.
-            // This is important to run in case of RejectedExectuionException, so that future calls
-            // to execute don't succeed and accidentally run a previous runnable.
-            runQueue.remove(removable);
-          }
+          // This case can only be reached if 'this' was not currently running, and we failed to
+          // reschedule.  The item should still be in the queue for removal.
+          // ConcurrentLinkedQueue claims that null elements are not allowed, but seems to not
+          // throw if the item to remove is null.  If removable is present in the queue twice,
+          // the wrong one may be removed.  It doesn't seem possible for this case to exist today.
+          // This is important to run in case of RejectedExectuionException, so that future calls
+          // to execute don't succeed and accidentally run a previous runnable.
+          remove(r);
           atomicHelper.runStateSet(this, STOPPED);
         }
       }
@@ -116,9 +106,20 @@ public final class SerializingExecutor implements Executor, Runnable {
 
   @Override
   public void run() {
-    Runnable r;
+    boolean running = true;
     try {
-      while ((r = runQueue.poll()) != null) {
+      Runnable r;
+      while (true) {
+        if ((r = poll()) == null) {
+          atomicHelper.runStateSet(this, STOPPED);
+          running = false;
+          if ((r = poll()) == null
+              || !atomicHelper.runStateCompareAndSet(this, STOPPED, RUNNING)) {
+             break;
+          }
+          // else we didn't enqueue anything but someone else did.
+          running = true;
+        }
         try {
           r.run();
         } catch (RuntimeException e) {
@@ -127,11 +128,9 @@ public final class SerializingExecutor implements Executor, Runnable {
         }
       }
     } finally {
-      atomicHelper.runStateSet(this, STOPPED);
-    }
-    if (!runQueue.isEmpty()) {
-      // we didn't enqueue anything but someone else did.
-      schedule(null);
+      if(running) {
+        atomicHelper.runStateSet(this, STOPPED);
+      }
     }
   }
 
