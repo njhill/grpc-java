@@ -32,7 +32,8 @@ import java.util.logging.Logger;
  */
 // TODO(madongfly): figure out a way to not expose it or move it to transport package.
 @SuppressWarnings("serial")
-public final class SerializingExecutor extends ConcurrentLinkedQueue<Runnable> implements Executor, Runnable {
+public final class SerializingExecutor extends ConcurrentLinkedQueue<Runnable>
+    implements Executor, Runnable {
   private static final Logger log =
       Logger.getLogger(SerializingExecutor.class.getName());
 
@@ -106,31 +107,24 @@ public final class SerializingExecutor extends ConcurrentLinkedQueue<Runnable> i
 
   @Override
   public void run() {
-    boolean running = true;
-    try {
-      Runnable r;
-      while (true) {
-        if ((r = poll()) == null) {
-          atomicHelper.runStateSet(this, STOPPED);
-          running = false;
-          if ((r = poll()) == null
-              || !atomicHelper.runStateCompareAndSet(this, STOPPED, RUNNING)) {
-             break;
+    Runnable r;
+    while (true) {
+      try {
+        while ((r = poll()) != null) {
+          try {
+            r.run();
+          } catch (RuntimeException e) {
+            // Log it and keep going.
+            log.log(Level.SEVERE, "Exception while executing runnable " + r, e);
           }
-          // else we didn't enqueue anything but someone else did.
-          running = true;
         }
-        try {
-          r.run();
-        } catch (RuntimeException e) {
-          // Log it and keep going.
-          log.log(Level.SEVERE, "Exception while executing runnable " + r, e);
-        }
-      }
-    } finally {
-      if(running) {
+      } finally {
         atomicHelper.runStateSet(this, STOPPED);
       }
+      if (isEmpty() || !atomicHelper.runStateCompareAndSet(this, STOPPED, RUNNING)) {
+        return;
+      }
+      // else we didn't enqueue anything but someone else did, continue
     }
   }
 
