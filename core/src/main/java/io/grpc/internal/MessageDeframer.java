@@ -85,6 +85,8 @@ public class MessageDeframer implements Closeable, Deframer {
     HEADER, BODY
   }
 
+  private static final ReadableBuffer EMPTY_FRAME = ReadableBuffers.wrap(new byte[0]);
+
   private Listener listener;
   private int maxInboundMessageSize;
   private final StatsTraceContext statsTraceCtx;
@@ -96,7 +98,7 @@ public class MessageDeframer implements Closeable, Deframer {
   private State state = State.HEADER;
   private int requiredLength = HEADER_LENGTH;
   private boolean compressedFlag;
-  private CompositeReadableBuffer nextFrame;
+  private ReadableBuffer nextFrame = EMPTY_FRAME;
   private CompositeReadableBuffer unprocessed = new CompositeReadableBuffer();
   private long pendingDeliveries;
   private boolean inDelivery = false;
@@ -309,10 +311,6 @@ public class MessageDeframer implements Closeable, Deframer {
     int totalBytesRead = 0;
     int deflatedBytesRead = 0;
     try {
-      if (nextFrame == null) {
-        nextFrame = new CompositeReadableBuffer();
-      }
-
       // Read until the buffer contains all the required bytes.
       int missingBytes;
       while ((missingBytes = requiredLength - nextFrame.readableBytes()) > 0) {
@@ -330,7 +328,7 @@ public class MessageDeframer implements Closeable, Deframer {
               // No more inflated data is available.
               return false;
             }
-            nextFrame.addBuffer(ReadableBuffers.wrap(inflatedBuffer, inflatedIndex, n));
+            addBuffer(ReadableBuffers.wrap(inflatedBuffer, inflatedIndex, n));
             inflatedIndex += n;
           } catch (IOException e) {
             throw new RuntimeException(e);
@@ -344,7 +342,7 @@ public class MessageDeframer implements Closeable, Deframer {
           }
           int toRead = Math.min(missingBytes, unprocessed.readableBytes());
           totalBytesRead += toRead;
-          nextFrame.addBuffer(unprocessed.readBytes(toRead));
+          addBuffer(unprocessed.readBytes(toRead));
         }
       }
       return true;
@@ -362,6 +360,19 @@ public class MessageDeframer implements Closeable, Deframer {
           }
         }
       }
+    }
+  }
+
+  private void addBuffer(ReadableBuffer buffer) {
+    if (nextFrame instanceof CompositeReadableBuffer) {
+      ((CompositeReadableBuffer) nextFrame).addBuffer(buffer);
+    } else if (nextFrame != EMPTY_FRAME) {
+      CompositeReadableBuffer composite = new CompositeReadableBuffer();
+      composite.addBuffer(nextFrame);
+      composite.addBuffer(buffer);
+      nextFrame = composite;
+    } else {
+      nextFrame = buffer;
     }
   }
 
@@ -404,7 +415,7 @@ public class MessageDeframer implements Closeable, Deframer {
     statsTraceCtx.inboundMessageRead(currentMessageSeqNo, inboundBodyWireSize, -1);
     inboundBodyWireSize = 0;
     InputStream stream = compressedFlag ? getCompressedBody() : getUncompressedBody();
-    nextFrame = null;
+    nextFrame = EMPTY_FRAME;
     listener.messagesAvailable(new SingleMessageProducer(stream));
 
     // Done with this frame, begin processing the next header.

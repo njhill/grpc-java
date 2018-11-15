@@ -44,6 +44,11 @@ class OkHttpReadableBuffer extends AbstractReadableBuffer {
   }
 
   @Override
+  public int readInt() {
+    return buffer.readInt();
+  }
+
+  @Override
   public void skipBytes(int length) {
     try {
       buffer.skip(length);

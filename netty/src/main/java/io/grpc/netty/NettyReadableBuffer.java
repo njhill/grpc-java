@@ -56,6 +56,11 @@ class NettyReadableBuffer extends AbstractReadableBuffer {
   }
 
   @Override
+  public int readInt() {
+    return buffer.readInt();
+  }
+
+  @Override
   public void readBytes(byte[] dest, int index, int length) {
     buffer.readBytes(dest, index, length);
   }

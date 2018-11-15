@@ -33,8 +33,15 @@ import org.mockito.stubbing.OngoingStubbing;
 @RunWith(JUnit4.class)
 public class AbstractReadableBufferTest {
 
+  abstract static class AbstractReadableBufferSubclass extends AbstractReadableBuffer {
+    @Override
+    public final int readInt() {
+      return super.readInt();
+    }
+  }
+
   @Mock
-  private AbstractReadableBuffer buffer;
+  private AbstractReadableBufferSubclass buffer;
 
   @Before
   public void setup() {

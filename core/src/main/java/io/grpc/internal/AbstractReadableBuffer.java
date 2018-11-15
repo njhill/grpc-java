@@ -21,7 +21,7 @@ package io.grpc.internal;
  */
 public abstract class AbstractReadableBuffer implements ReadableBuffer {
   @Override
-  public final int readInt() {
+  public int readInt() {
     checkReadable(4);
     int b1 = readUnsignedByte();
     int b2 = readUnsignedByte();

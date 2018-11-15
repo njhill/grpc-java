@@ -227,6 +227,12 @@ public final class ReadableBuffers {
     }
 
     @Override
+    public int readInt() {
+      checkReadable(4);
+      return bytes.getInt();
+    }
+
+    @Override
     public void skipBytes(int length) {
       checkReadable(length);
       bytes.position(bytes.position() + length);
